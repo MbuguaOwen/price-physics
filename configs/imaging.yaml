@@ -1,0 +1,23 @@
+windows: [32, 64, 128]
+stride: 1
+image_size: 64
+scaler: robust
+channels:
+  - type: GASF
+    source: price
+  - type: GADF
+    source: price
+  - type: MTF
+    source: price
+  - type: RP
+    source: price
+  - type: CWT
+    source: price
+  - type: GASF
+    source: qty
+calendar_embeddings: true
+calendar_features: [tod_sin, tod_cos, dow_sin, dow_cos]
+cross_asset:
+  enabled: false
+  bars_glob: "data/bars_dollar/*ETH*.parquet"
+  how: "pair_gaf"

@@ -1,0 +1,7 @@
+pt_mult: 100.0
+sl_mult: 20.0
+max_holding_bars: 64
+vol_method: atr
+ewma_span: 32
+atr_period: 14
+label_classes: [1, 0, -1]

@@ -1,0 +1,11 @@
+numpy
+pandas
+pyyaml
+matplotlib
+scikit-learn
+torch
+timm
+pyts
+PyWavelets
+tqdm
+pyarrow

@@ -1,0 +1,12 @@
+folds:
+  - {train_start: "2025-01-01", train_end: "2025-01-31", test_start: "2025-02-01", test_end: "2025-02-28"}
+  - {train_start: "2025-01-01", train_end: "2025-02-28", test_start: "2025-03-01", test_end: "2025-03-31"}
+  - {train_start: "2025-01-01", train_end: "2025-03-31", test_start: "2025-04-01", test_end: "2025-04-30"}
+thresholding:
+  min_confidence: 0.58
+cost_model:
+  fee_bps: 3.5
+  slippage_bps: 2.0
+reports:
+  out_dir: outputs/reports
+  plots_dir: outputs/plots
