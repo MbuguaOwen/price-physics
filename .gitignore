@@ -1,0 +1,12 @@
+# Data files
+data/
+
+# Python cache
+__pycache__/
+
+# Virtual environment
+venv/
+*.env
+
+# Outputs - you may want to track reports but not large artifacts
+outputs/artifacts/

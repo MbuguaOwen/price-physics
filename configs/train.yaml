@@ -1,0 +1,19 @@
+seed: 1337
+epochs: 15
+batch_size: 128
+learning_rate: 1e-3
+weight_decay: 1e-4
+model_name: timm_convnext_tiny
+in_channels: 10
+optimizer: adamw
+scheduler: cosine
+early_stop_patience: 4
+
+data:
+  images_root: data/images
+  labels_root: data/labels
+
+logging:
+  log_dir: outputs/artifacts/logs
+  checkpoints_dir: outputs/artifacts/checkpoints
+  final_model_path: outputs/artifacts/model_last_fold.pt

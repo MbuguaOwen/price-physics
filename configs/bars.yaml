@@ -1,0 +1,6 @@
+bar_type: dollar
+dollar_value: 500000
+time_col: timestamp
+price_col: price
+qty_col: qty
+output_format: parquet
