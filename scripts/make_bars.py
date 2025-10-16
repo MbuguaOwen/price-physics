@@ -335,6 +335,9 @@ def main() -> None:
     ap.add_argument("--config", default="configs/bars.yaml")
     ap.add_argument("--bar_type", default="dollar", choices=["dollar"])
     ap.add_argument("--dollar_value", type=float, default=None)
+    ap.add_argument("--adapt_dollar_monthly", action="store_true", help="Adapt dollar_value monthly to target bars/day.")
+    ap.add_argument("--target_bars_per_day", type=float, default=None, help="Target bars/day when adapting.")
+    ap.add_argument("--clip_factor", type=float, default=2.0, help="Cap monthly dollar_value change by this factor.")
     ap.add_argument("--engine", default="pandas", choices=["pandas"], help="CSV engine to use.")
     ap.add_argument("--chunk_rows", type=int, default=None, help="Optional chunk size for CSV loading.")
     ap.add_argument("--col-timestamp", dest="col_timestamp", help="Override column name for timestamp.")
@@ -380,9 +383,66 @@ def main() -> None:
         overrides["side"] = args.col_side
 
     threshold = args.dollar_value if args.dollar_value else float(cfg.get("dollar_value", 5e5))
+    # YAML-based adapt block
+    adapt_cfg = (cfg.get("adapt_dollar_value") or {}) if isinstance(cfg, dict) else {}
+    adapt_flag = bool(args.adapt_dollar_monthly or adapt_cfg.get("enabled", False))
+    target_bpd = float(args.target_bars_per_day or adapt_cfg.get("target_bars_per_day", 0) or 0)
+    clip_factor = float(args.clip_factor or adapt_cfg.get("clip_factor", 2.0))
+
+    def _estimate_dollar_value_for_file(csv_path: str, fallback: float) -> float:
+        if not adapt_flag or target_bpd <= 0:
+            return fallback
+        try:
+            # Light scan of file for daily notional
+            tmp = pd.read_csv(csv_path, usecols=None)
+            # Best-effort column mapping
+            lookup = _column_lookup(tmp.columns)
+            ts_col = lookup.get("timestamp") or next((lookup[a] for a in ALIASES["timestamp"] if a in lookup), None)
+            p_col = lookup.get("price") or next((lookup[a] for a in ALIASES["price"] if a in lookup), None)
+            q_col = lookup.get("qty") or next((lookup[a] for a in ALIASES["qty"] if a in lookup), None)
+            if not (ts_col and p_col and q_col):
+                return fallback
+            ts = tmp[ts_col]
+            vmax = int(pd.to_numeric(ts, errors="coerce").max() or 0)
+            unit = "ns" if vmax > 10 ** 14 else ("ms" if vmax > 10 ** 12 else "s")
+            t = pd.to_datetime(ts, unit=unit, utc=True)
+            notional = pd.to_numeric(tmp[p_col], errors="coerce").fillna(0) * pd.to_numeric(tmp[q_col], errors="coerce").fillna(0)
+            daily = notional.groupby(t.dt.date).sum()
+            base = float(daily.median()) if len(daily) else 0.0
+            dv = base / float(target_bpd) if target_bpd > 0 else base
+            # Clip vs provided fallback
+            lo, hi = fallback / clip_factor, fallback * clip_factor
+            if dv <= 0:
+                return fallback
+            return float(max(min(dv, hi), lo))
+        except Exception:
+            return fallback
     total_files = len(files)
 
     for idx, path in enumerate(tqdm(files, desc="Building bars", unit="file"), start=1):
+        sym = os.path.splitext(os.path.basename(path))[0]
+        outp = os.path.join(args.out_dir, f"{sym}.parquet")
+        if os.path.exists(outp) and os.path.getsize(outp) > 0:
+            # Enforce unique timestamps if an existing file has duplicates (monotonic bump)
+            try:
+                df_existing = pd.read_parquet(outp)
+                if "timestamp" in df_existing.columns:
+                    ts = pd.to_numeric(df_existing["timestamp"], errors="coerce").astype("int64").to_numpy()
+                    last = np.int64(-(2**62))
+                    changed = False
+                    for i in range(len(ts)):
+                        if ts[i] <= last:
+                            ts[i] = last + 1
+                            changed = True
+                        last = ts[i]
+                    if changed:
+                        df_existing["timestamp"] = ts.astype("int64")
+                        df_existing.to_parquet(outp, index=False)
+                        tqdm.write(f"[FIX] Deduped timestamps (monotonic) in {outp}")
+            except Exception:
+                pass
+            tqdm.write(f"[SKIP] {os.path.basename(path)} -> {outp} (exists)")
+            continue
         tqdm.write(f"Processing {os.path.basename(path)} [{idx}/{total_files}]")
         try:
             ticks = load_ticks_flexible(
@@ -399,18 +459,32 @@ def main() -> None:
             tqdm.write(f"No valid ticks for {path}.")
             continue
 
-        bars = build_dollar_bars(ticks, dollar_value=threshold)
+        dv_use = _estimate_dollar_value_for_file(path, threshold)
+        bars = build_dollar_bars(ticks, dollar_value=dv_use)
         if bars.empty:
             tqdm.write(f"No bars for {path}")
             continue
 
-        bars = bars[["timestamp", "open", "high", "low", "close"]].copy()
+        cols = ["timestamp", "open", "high", "low", "close"]
+        for _c in ("qty", "notional"):
+            if _c in bars.columns and _c not in cols:
+                cols.append(_c)
+        bars = bars[cols].copy()
         bars["timestamp"] = pd.to_datetime(bars["timestamp"], utc=True, errors="coerce").astype("int64") // 1_000_000
+        # Enforce per-file unique timestamps (ms); bump duplicates by +1, +2, ... ms
+        ts = pd.to_numeric(bars["timestamp"], errors="coerce").astype("int64").to_numpy()
+        last = np.int64(-(2**62))
+        changed = False
+        for i in range(len(ts)):
+            if ts[i] <= last:
+                ts[i] = last + 1
+                changed = True
+            last = ts[i]
+        if changed:
+            bars["timestamp"] = ts.astype("int64")
         for col in ("open", "high", "low", "close"):
             bars[col] = bars[col].astype("float32")
 
-        sym = os.path.splitext(os.path.basename(path))[0]
-        outp = os.path.join(args.out_dir, f"{sym}.parquet")
         bars.to_parquet(outp, index=False)
         tqdm.write(f"Wrote {outp} {len(bars)}")
 

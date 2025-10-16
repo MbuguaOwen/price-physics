@@ -4,3 +4,7 @@ time_col: timestamp
 price_col: price
 qty_col: qty
 output_format: parquet
+adapt_dollar_value:
+  enabled: false
+  target_bars_per_day: 1200
+  clip_factor: 2.0
