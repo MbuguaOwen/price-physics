@@ -1,3 +1,8 @@
+import sys, pathlib
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import argparse, os, json, numpy as np, torch
 from pathlib import Path
 from src.models.resnet_lite import build_model as build_resnet_lite

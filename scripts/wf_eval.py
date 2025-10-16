@@ -1,3 +1,8 @@
+import sys, pathlib
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import argparse, os, yaml, json, numpy as np, pandas as pd
 from pathlib import Path
 from src.sim.pnl_sim import probs_to_trades, pnl_from_positions
