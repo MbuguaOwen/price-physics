@@ -130,3 +130,21 @@ See inline docstrings for module-level details.
 
 ## License & Attribution
 For internal research and production trading use. No warranty. Use at your own risk.
+
+
+# from project root { MODULES }
+
+```bash
+
+python -m scripts.make_labels `
+  --bars_glob "data/bars_dollar/*2025-0[1-7]*.parquet" `
+  --out_dir "data/labels_jan_jul_atr" `
+  --config "configs/tbm.yaml"
+
+
+
+# If you stayed on percent:
+python scripts\label_stats.py "data\labels_jan_jul_percent\*.parquet"
+
+# If you switched to ATR:
+python scripts\label_stats.py "data\labels_jan_jul_atr\*.parquet"

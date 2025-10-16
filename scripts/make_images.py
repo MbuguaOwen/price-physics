@@ -1,3 +1,8 @@
+import sys, pathlib
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import argparse, glob, os, yaml, numpy as np, pandas as pd
 from tqdm.auto import tqdm
 from src.imaging.exact import robust_scale, make_gaf_gadf, make_mtf, make_rp, make_cwt

@@ -1,37 +1,28 @@
-pt_mult: 100.0
-sl_mult: 20.0
-max_holding_bars: 256
-vol_method: atr
-ewma_span: 32
-atr_period: 14
-label_classes: [1, 0, -1]
-
-# Labeling configuration
-use_ohlc: true                 # use high/low in barrier checks
-allow_same_bar_touch: true     # allow same-bar exits
-same_bar_resolution: sl_first  # alias to sl_wins
-
-# Clock horizon (canonical)
-horizon:
-  type: clock
-  minutes: 30
-
-# Percent or time-window volatility sizing (canonical)
-barriers:
-  mode: percent                # 'percent' | 'vol_time'
-  up: 0.005                    # +50 bps
-  down: 0.004                  # -40 bps
-
-# Defaults for external clock-vol mode (non-breaking)
 vol_time_defaults:
-  vol_window_minutes: 30
+  vol_window_minutes: 240
   nearest_tolerance_seconds: 60
   timebar_freq: 1T
   source:
-    kind: ticks                # or "timebars"
+    kind: ticks
     ticks_glob: data/ticks_raw/*2025-0[1-7]*.csv
     timebars_glob: data/timebars_1m/*.parquet
-
-# Legacy volatility options (fallback when barriers.mode is unknown)
-atr_kind: wilder               # "wilder" | "ema"
-normalize_by_close: true       # scale ATR by current close to get relative width
+labeling:
+  use_ohlc: true
+  allow_same_bar_touch: true
+  same_bar_resolution: drop
+  normalize_by_close: false
+  horizon:
+    type: clock
+    minutes: 240
+  max_holding_bars: 5000
+  vol_method: atr
+  atr_kind: wilder
+  atr_period: 14
+  barriers:
+    mode: atr
+    pt_mult: 1.25
+    sl_mult: 1.25
+  label_classes:
+  - 1
+  - 0
+  - -1

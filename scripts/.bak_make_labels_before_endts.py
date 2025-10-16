@@ -1,4 +1,4 @@
-import sys, pathlib
+﻿import sys, pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -33,7 +33,6 @@ from src.labeling.triple_barrier import (
     triple_barrier_labels_ohlc_t1,  # kept for backward compatibility
     ewma_vol,
     atr_vol,
-    build_barriers,
 )
 
 
@@ -50,29 +49,80 @@ def add_end_ts_from_df(df, labels_df, cfg):
     if not isinstance(ts, pd.DatetimeIndex):
         ts = pd.to_datetime(ts, utc=True)
 
-    # Rebuild the same valid subset used by the labeler, then map i/t_end -> timestamps.
-    # This avoids index-type issues and ensures consistency with the labeling logic.
-    ts_series = pd.to_datetime(df.get("timestamp", df.index), utc=True, errors="coerce")
-    bar_df = build_barriers(df, cfg)
-    dfv_ts = ts_series.loc[bar_df.index]
+    high = df["high"].to_numpy()
+    low  = df["low"].to_numpy()
+    close = df["close"].to_numpy()
 
-    # Indices within the valid subset
-    i_pos = labels_df["i"].to_numpy(dtype=int) if "i" in labels_df.columns else np.arange(len(labels_df))
-    t_end_pos = labels_df["t_end"].to_numpy(dtype=int) if "t_end" in labels_df.columns else i_pos
+    # Wilder ATR (EWMA) with default 14 unless provided
+    period = int(cfg.get("atr_period", 14))
+    hl = (df["high"] - df["low"]).abs()
+    hc = (df["high"] - df["close"].shift(1)).abs()
+    lc = (df["low"]  - df["close"].shift(1)).abs()
+    tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
+    atr = tr.ewm(alpha=1/period, adjust=False).mean().to_numpy()
 
-    # Map to timestamps
-    ts_vals = dfv_ts.to_numpy()
-    entry_ts = pd.to_datetime(ts_vals[i_pos])
-    end_ts = pd.to_datetime(ts_vals[t_end_pos])
+    pt_mult = float(cfg.get("pt_mult", 100.0))
+    sl_mult = float(cfg.get("sl_mult", 20.0))
+    horizon = cfg.get("horizon", {"type":"clock","minutes":30})
+    assert (horizon or {}).get("type","clock") == "clock", "This helper assumes clock-time vertical horizon."
+    H = int((horizon or {}).get("minutes", 30))
+    same_rule = cfg.get("same_bar_resolution","sl_first")
 
-    out = labels_df.copy()
-    out["end_ts"] = end_ts
-    out["time_to_hit_sec"] = (end_ts - entry_ts).astype("timedelta64[ns]") / np.timedelta64(1, "s")
-    # Reason normalization (optional): map 't1' -> 'vertical'
-    if "end_reason" in out.columns:
-        out["event_end_reason"] = out["end_reason"].replace({"t1": "vertical"})
-    elif "event_end_reason" not in out.columns:
+    # Prepare result arrays
+    n = len(df)
+    end_ts = np.empty(n, dtype="datetime64[ns]")
+    end_ts[:] = np.datetime64("NaT")
+    t_hit = np.full(n, np.nan)
+    reason = np.full(n, "", dtype=object)
+
+    # We assume labels_df index aligns to df's index (same events)
+    lab = labels_df
+    lab_index = lab.index.to_numpy()
+
+    for i in lab_index:
+        if i < 0 or i >= n:
+            continue
+        p0 = close[i]
+        up = p0 + pt_mult * atr[i]
+        dn = p0 - sl_mult * atr[i]
+        t_vert = ts[i] + pd.Timedelta(minutes=H)
+
+        hit_side = 0
+        hit_time = t_vert
+        # scan forward until vertical barrier
+        j = i + 1
+        while j < n and ts[j] < t_vert:
+            hit_up = high[j] >= up
+            hit_dn = low[j]  <= dn
+            if hit_up and hit_dn:
+                if same_rule == "pt_first":
+                    hit_side = +1; hit_time = ts[j]; reason[i] = "pt_sl_same_bar_pt_first"
+                elif same_rule == "sl_first":
+                    hit_side = -1; hit_time = ts[j]; reason[i] = "pt_sl_same_bar_sl_first"
+                else:
+                    hit_side = 0;   hit_time = t_vert; reason[i] = "both_hit_neutral"
+                break
+            if hit_up:
+                hit_side = +1; hit_time = ts[j]; reason[i] = "pt"; break
+            if hit_dn:
+                hit_side = -1; hit_time = ts[j]; reason[i] = "sl"; break
+            j += 1
+
+        end_ts[i] = np.datetime64(hit_time.value)
+        t_hit[i] = (hit_time - ts[i]).total_seconds()
+
+    out = lab.copy()
+    # Ensure columns exist even if some entries remained NaT
+    out["end_ts"] = pd.to_datetime(end_ts)
+    out["time_to_hit_sec"] = t_hit
+    if "event_end_reason" not in out.columns:
         out["event_end_reason"] = ""
+        # Fill per-index reasons where known
+        for i in lab_index:
+            if i < len(reason) and isinstance(reason[i], str) and reason[i]:
+                out.at[i, "event_end_reason"] = reason[i]
+            elif pd.isna(out.at[i, "time_to_hit_sec"]):
+                out.at[i, "event_end_reason"] = "vertical"
     return out
 
 def to_bool(x, default=False) -> bool:
@@ -310,3 +360,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
