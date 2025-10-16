@@ -30,6 +30,7 @@ class ImageLabelDS(Dataset):
 
 def infer_in_ch(images_root):
     import numpy as np, glob, os
+from src.utils.seeds import set_global_determinism
     files = glob.glob(os.path.join(images_root, "*_images.npy"))
     if not files: return 4
     X = np.load(files[0])
@@ -80,6 +81,8 @@ def main():
             wait += 1
             if wait >= patience: break
     tqdm.write(f"Saved best model to {os.path.join(args.artifacts_dir, 'model_last_fold.pt')}")
+
+set_global_determinism(1337)
 
 if __name__ == "__main__":
     main()

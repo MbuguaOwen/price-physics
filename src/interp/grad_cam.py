@@ -1,7 +1,13 @@
-import torch
-import torch.nn.functional as F
+try:
+    import torch
+    import torch.nn.functional as F
+except Exception:  # pragma: no cover - allow import without heavy deps
+    torch = None
+    F = None
 
 def grad_cam(model, x, target_class_idx: int = None, layer_attr: str = None):
+    if torch is None or F is None:
+        raise ImportError("torch is required for grad_cam; please install torch.")
     if layer_attr is None:
         layer_attr = next(reversed([n for n,_ in model.named_modules()]))
     acts = []; grads = []

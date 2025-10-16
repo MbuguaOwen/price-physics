@@ -38,7 +38,7 @@ If you only want to test the scaffolding without heavy training, you can skip th
 ---
 
 ## Data Expectations
-- Raw ticks in `data/ticks_raw/` with columns:
+- Raw REAL ticks in `data/ticks_raw/` (Jan–Jul only; no synthetic) with columns:
   - `timestamp` (ns or ms epoch or ISO8601), `price` (float), `qty` (float), optional `is_buyer_maker` (bool/int).
 - Example glob: `data/ticks_raw/BTCUSDT_2025-*.csv`
 
@@ -49,7 +49,7 @@ If you only want to test the scaffolding without heavy training, you can skip th
 ## Runbook (Reproduce End-to-End)
 1) **Bars**
 ```bash
-python scripts/make_bars.py   --ticks_glob "data/ticks_raw/*.csv"   --out_dir "data/bars_dollar"   --bar_type dollar   --dollar_value 500000
+python scripts/make_bars.py   --ticks_glob "data/ticks_raw/*2025-0[1-7]*.csv"   --out_dir "data/bars_dollar"   --bar_type dollar   --dollar_value 500000
 ```
 
 2) **Labels (Triple-Barrier)**
@@ -81,7 +81,7 @@ python scripts/interpret.py   --config "configs/train.yaml"   --model_path "outp
 ```bash
 python -m scripts.demo_generate_ticks --symbol BTCUSDT --days 2 --out data/ticks_raw/BTCUSDT_demo.csv
 
-python -m scripts.make_bars --ticks_glob "data/ticks_raw/*.csv" --out_dir data/bars_dollar --bar_type dollar --dollar_value 100000
+python -m scripts.make_bars --ticks_glob "data/ticks_raw/*2025-0[1-7]*.csv" --out_dir data/bars_dollar --bar_type dollar --dollar_value 100000
 
 python -m scripts.make_labels --bars_glob "data/bars_dollar/*.parquet" --out_dir data/labels --config configs/tbm.yaml
 

@@ -1,6 +1,15 @@
-import timm, torch, torch.nn as nn
+try:
+    import timm
+    import torch
+    import torch.nn as nn
+except Exception:  # pragma: no cover - allow import without heavy deps
+    timm = None
+    torch = None
+    nn = None
 
-def patch_first_conv(model: torch.nn.Module, in_ch: int):
+def patch_first_conv(model, in_ch: int):
+    if torch is None or nn is None:
+        raise ImportError("torch is required for patch_first_conv; please install torch.")
     first = None
     for m in model.modules():
         if isinstance(m, nn.Conv2d) and m.in_channels == 3:
@@ -23,6 +32,8 @@ def patch_first_conv(model: torch.nn.Module, in_ch: int):
     return model
 
 def build_timm(model_name: str, num_classes: int, in_ch: int):
+    if timm is None or torch is None or nn is None:
+        raise ImportError("timm and torch are required for build_timm; please install them.")
     if model_name == "timm_convnext_tiny":
         model = timm.create_model("convnext_tiny", pretrained=False, num_classes=num_classes, in_chans=3)
     elif model_name == "timm_vit_tiny":
