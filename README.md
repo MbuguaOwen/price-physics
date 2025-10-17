@@ -142,9 +142,34 @@ python -m scripts.make_labels `
   --config "configs/tbm.yaml"
 
 
-
-# If you stayed on percent:
-python scripts\label_stats.py "data\labels_jan_jul_percent\*.parquet"
-
 # If you switched to ATR:
 python scripts\label_stats.py "data\labels_jan_jul_atr\*.parquet"
+ 
+
+#Imaging
+
+Build images for Jan–Jul (10 channels)
+------------------------------------------------------------
+python scripts\make_images.py `
+  --bars_glob "data/bars_dollar/*2025-0[1-7]*.parquet" `
+  --out_dir "data/images_jan_jul" `
+  --config "configs/imaging.yaml"
+
+
+# (A) If image building is already running, leave it. You can start training now.
+# (B) Build a snapshot for finished months (adjust run_tags as they complete):
+python scripts\make_snapshot.py --root "data/images_jan_jul" --out_csv "data/images_jan_jul\train_snapshot.csv" --include "BTCUSDT_2025-01,BTCUSDT_2025-02"
+
+# (C) Kick a quick training warmup to verify throughput (no labels yet):
+python scripts\train_sanity.py --snapshot "data/images_jan_jul\train_snapshot.csv" --batch 64 --epochs 1
+
+
+Run it:
+
+python -u scripts\label_from_ticks.py `
+  --snapshot "data\images_jan_jul\btc_snapshot_2025_01_07_FIXED.csv" `
+  --out_csv "data\images_jan_jul\btc_labels_ticks_atr14_tp100_sl20_m600.csv" `
+  --ticks_root "data\ticks_raw" `
+  --bars_root  "data\bars_dollar" `
+  --atr_window 14 --tp_mult 100 --sl_mult 20 --horizon_minutes 600 `
+  --resume

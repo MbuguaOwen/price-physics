@@ -20,8 +20,8 @@ labeling:
   atr_period: 14
   barriers:
     mode: atr
-    pt_mult: 1.25
-    sl_mult: 1.25
+    pt_mult: 150
+    sl_mult: 25
   label_classes:
   - 1
   - 0
