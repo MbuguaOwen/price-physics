@@ -142,9 +142,15 @@ python -m scripts.make_labels `
   --config "configs/tbm.yaml"
 
 
-
-# If you stayed on percent:
-python scripts\label_stats.py "data\labels_jan_jul_percent\*.parquet"
-
 # If you switched to ATR:
 python scripts\label_stats.py "data\labels_jan_jul_atr\*.parquet"
+ 
+
+#Imaging
+
+Build images for Jan–Jul (10 channels)
+------------------------------------------------------------
+python scripts\make_images.py `
+  --bars_glob "data/bars_dollar/*2025-0[1-7]*.parquet" `
+  --out_dir "data/images_jan_jul" `
+  --config "configs/imaging.yaml"

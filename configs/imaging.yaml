@@ -1,4 +1,4 @@
-windows: [32, 64, 128]
+﻿windows: [32, 64, 128]
 stride: 1
 image_size: 64
 scaler: robust
@@ -21,3 +21,8 @@ cross_asset:
   enabled: false
   bars_glob: "data/bars_dollar/*ETH*.parquet"
   how: "pair_gaf"
+
+# Feature flags (default off to speed initial build)
+enable_cwt: false
+enable_rp: false
+mtf_bins: 8
