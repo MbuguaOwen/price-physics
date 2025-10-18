@@ -1,0 +1,49 @@
+﻿# scripts/make_snapshot.py
+import argparse, os, glob, pandas as pd
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--root", required=True)
+    ap.add_argument("--out_csv", required=True)
+    ap.add_argument("--include", default="")
+    args = ap.parse_args()
+
+    run_tags = []
+    if args.include.strip():
+        run_tags = [x.strip() for x in args.include.split(",") if x.strip()]
+    else:
+        # auto-discover run_tags with manifest.csv
+        for d in glob.glob(os.path.join(args.root, "*")):
+            if os.path.isdir(d) and os.path.exists(os.path.join(d, "manifest.csv")):
+                run_tags.append(os.path.basename(d))
+    if not run_tags:
+        print("No run_tags with manifest.csv found.")
+        return
+
+    frames = []
+    kept_counts = {}
+    for rt in sorted(run_tags):
+        man = os.path.join(args.root, rt, "manifest.csv")
+        if not os.path.exists(man):
+            continue
+        df = pd.read_csv(man)
+        df["relpath"] = df["relpath"].astype(str)
+        df["fullpath"] = df["relpath"].apply(lambda p: os.path.join(args.root, p))
+        df = df[df["fullpath"].apply(os.path.exists)].reset_index(drop=True)
+        kept_counts[rt] = len(df)
+        frames.append(df)
+
+    if not frames:
+        print("No rows to write after filtering.")
+        return
+    out = pd.concat(frames, ignore_index=True)
+    os.makedirs(os.path.dirname(args.out_csv), exist_ok=True)
+    out.to_csv(args.out_csv, index=False)
+    total = len(out)
+    print(f"Wrote snapshot: {args.out_csv}  rows={total}")
+    for k, v in kept_counts.items():
+        print(f"  {k}: {v}")
+
+if __name__ == "__main__":
+    main()
+

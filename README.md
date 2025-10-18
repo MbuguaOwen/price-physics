@@ -154,3 +154,11 @@ python scripts\make_images.py `
   --bars_glob "data/bars_dollar/*2025-0[1-7]*.parquet" `
   --out_dir "data/images_jan_jul" `
   --config "configs/imaging.yaml"
+
+
+# (A) If image building is already running, leave it. You can start training now.
+# (B) Build a snapshot for finished months (adjust run_tags as they complete):
+python scripts\make_snapshot.py --root "data/images_jan_jul" --out_csv "data/images_jan_jul\train_snapshot.csv" --include "BTCUSDT_2025-01,BTCUSDT_2025-02"
+
+# (C) Kick a quick training warmup to verify throughput (no labels yet):
+python scripts\train_sanity.py --snapshot "data/images_jan_jul\train_snapshot.csv" --batch 64 --epochs 1

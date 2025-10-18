@@ -29,13 +29,17 @@ def ensure_dir(p: str) -> None:
 
 def get_run_tag(bars_path: str) -> str:
     base = os.path.splitext(os.path.basename(bars_path))[0]
-    # Try to extract SYMBOL and YYYY-MM
+    # Extract SYMBOL and YYYY-MM robustly (e.g., BTCUSDT_2025-01_*.parquet)
     import re as _re
-    m = _re.search(r"([A-Za-z0-9_]+).*?(20\d{2}-\d{2})", base)
-    if m:
-        sym = m.group(1).upper()
-        ym = m.group(2)
-        return f"{sym}_{ym}"
+    dm = _re.search(r"(20\d{2}-\d{2})", base)
+    if dm:
+        ym = dm.group(1)
+        prefix = base[: dm.start()].rstrip("_- ")
+        # take the last token of the prefix as symbol
+        toks = _re.split(r"[_\-]+", prefix)
+        sym = toks[-1].upper() if toks else prefix.upper()
+        if sym:
+            return f"{sym}_{ym}"
     return base
 
 
@@ -108,7 +112,22 @@ def flush_npy_shard(shard_idx: int, imgs: list, metas: list, out_root: str, run_
 def build_stack_streaming(bars: pd.DataFrame, window: int, image_size: int, cfg, out_root: str, run_tag: str, batch_size: int = 2048, save_png_previews: bool = False) -> dict:
     skipped = 0
     written = 0
-    shard_idx = 0
+    # Continue shard indexing if prior shards exist (avoid overwrite across windows/reruns)
+    shards_dir = os.path.join(out_root, run_tag, "shards")
+    try:
+        existing = sorted(glob.glob(os.path.join(shards_dir, "images_*.npy")))
+        if existing:
+            import re as _re
+            indices = []
+            for fp in existing:
+                m = _re.search(r"images_(\d{4})\.npy$", os.path.basename(fp))
+                if m:
+                    indices.append(int(m.group(1)))
+            shard_idx = (max(indices) + 1) if indices else 0
+        else:
+            shard_idx = 0
+    except Exception:
+        shard_idx = 0
     imgs: list = []
     metas: list = []
 
