@@ -131,45 +131,132 @@ See inline docstrings for module-level details.
 ## License & Attribution
 For internal research and production trading use. No warranty. Use at your own risk.
 
+1) Make src importable (one-time per shell)
+$env:PYTHONPATH = "$PWD"
+
+
+(Do this before running any script that imports from src/...)
+
 
 # from project root { MODULES }
 
 ```bash
 
-python -m scripts.make_labels `
-  --bars_glob "data/bars_dollar/*2025-0[1-7]*.parquet" `
-  --out_dir "data/labels_jan_jul_atr" `
-  --config "configs/tbm.yaml"
+2) Estimate per-month TP/SL policy
+python scripts\quantile_tp_sl_grouped.py `
+  --snapshot "data\images_jan_jul\btc_snapshot_2025_01_07_FIXED.csv" `
+  --horizon_minutes 600 `
+  --sample 50000 `
+  --atr_window 14 `
+  --group month `
+  --q_tp 0.60 --q_sl 0.40 `
+  --out_json "outputs/tp_sl_policy_by_month_q60_40.json"
 
 
-# If you switched to ATR:
-python scripts\label_stats.py "data\labels_jan_jul_atr\*.parquet"
- 
+(If you want, generate a couple variants to compare later:)
 
-#Imaging
+python scripts\quantile_tp_sl_grouped.py ... --q_tp 0.55 --q_sl 0.45 --out_json "outputs/tp_sl_policy_by_month_q55_45.json"
+python scripts\quantile_tp_sl_grouped.py ... --q_tp 0.65 --q_sl 0.35 --out_json "outputs/tp_sl_policy_by_month_q65_35.json"
 
-Build images for Jan–Jul (10 channels)
-------------------------------------------------------------
-python scripts\make_images.py `
-  --bars_glob "data/bars_dollar/*2025-0[1-7]*.parquet" `
-  --out_dir "data/images_jan_jul" `
-  --config "configs/imaging.yaml"
-
-
-# (A) If image building is already running, leave it. You can start training now.
-# (B) Build a snapshot for finished months (adjust run_tags as they complete):
-python scripts\make_snapshot.py --root "data/images_jan_jul" --out_csv "data/images_jan_jul\train_snapshot.csv" --include "BTCUSDT_2025-01,BTCUSDT_2025-02"
-
-# (C) Kick a quick training warmup to verify throughput (no labels yet):
-python scripts\train_sanity.py --snapshot "data/images_jan_jul\train_snapshot.csv" --batch 64 --epochs 1
-
-
-Run it:
-
+3) Relabel from ticks using that policy
 python -u scripts\label_from_ticks.py `
   --snapshot "data\images_jan_jul\btc_snapshot_2025_01_07_FIXED.csv" `
-  --out_csv "data\images_jan_jul\btc_labels_ticks_atr14_tp100_sl20_m600.csv" `
+  --out_csv "data\images_jan_jul\btc_labels_ticksONLY_GROUPED_m600.csv" `
   --ticks_root "data\ticks_raw" `
-  --bars_root  "data\bars_dollar" `
-  --atr_window 14 --tp_mult 100 --sl_mult 20 --horizon_minutes 600 `
+  --bars_root "data\bars_dollar" `
+  --atr_window 14 `
+  --tp_mult 50.50335478971694 `
+  --sl_mult 18.404720361751057 `
+  --horizon_minutes 600 `
+  --mode ticks `
+  --tp_sl_policy_json "outputs/tp_sl_policy_by_month_q60_40.json" `
+  --policy_group month `
   --resume
+
+4) Uniqueness weights
+python scripts\compute_uniqueness.py `
+  --snapshot_labeled "data\images_jan_jul\btc_labels_ticksONLY_GROUPED_m600.csv" `
+  --out_csv "data\images_jan_jul\btc_labels_ticksONLY_GROUPED_m600_w.csv"
+
+5) CV folds (purged + embargoed)
+python scripts\make_folds.py `
+  --snapshot_labeled "data\images_jan_jul\btc_labels_ticksONLY_GROUPED_m600_w.csv" `
+  --out_csv "data\images_jan_jul\btc_cv_folds_ticksONLY_GROUPED_m600.csv" `
+  --k 5 --purge_time "1h" --embargo_time "600m"
+
+6) (Re)build tiny regime features (or reuse if already built)
+python scripts\make_regime_features.py `
+  --snapshot "data\images_jan_jul\btc_snapshot_2025_01_07_FIXED.csv" `
+  --out_csv "data\images_jan_jul\btc_features_m60_v60.csv" `
+  --bars_root "data\bars_dollar" `
+  --horiz_min 60 --vol_min 60
+
+
+Your trainer should already merge btc_features_m60_v60.csv by row_id after the code change.
+
+7) Retrain with the binary TP head (+ focal)
+$CW_BIN = '{"0":1.0,"1":4.0}'
+
+python scripts\train_classifier_cv.py `
+  --snapshot_labeled "data\images_jan_jul\btc_labels_ticksONLY_GROUPED_m600_w.csv" `
+  --cv_folds "data\images_jan_jul\btc_cv_folds_ticksONLY_GROUPED_m600.csv" `
+  --binary_head --n_classes 2 `
+  --batch 128 --epochs 4 --steps_per_epoch 300 `
+  --sample_weight_col uniqueness `
+  --class_weight "$CW_BIN" `
+  --use_focal --focal_gamma 2.0 `
+  --preds_out_binary "outputs/preds_cv_tp_grouped.csv" `
+  --progress
+
+8) Evaluate lift & EV (binary)
+@'
+import pandas as pd, numpy as np
+from sklearn.metrics import average_precision_score
+
+P = pd.read_csv(r"outputs/preds_cv_tp_grouped.csv")
+y = P["y_true_bin"].to_numpy().astype(int)
+p = P["p_tp"].clip(0,1).to_numpy()
+
+base = y.mean()
+ap = average_precision_score(y,p)
+print({"base_rate": round(base,4), "PR_AUC": round(ap,4), "lift": round(ap/base,2)})
+
+W, L = 50.50335478971694, 18.404720361751057
+def ev(prec): return prec*W - (1-prec)*L
+
+best=None
+for t in np.linspace(0,1,201):
+    sel = p>=t
+    if sel.sum()==0: continue
+    prec = y[sel].mean(); e = ev(prec)
+    if best is None or e>best[2]: best=(t,prec,e,sel.sum())
+print({"breakeven_precision": round(L/(W+L),4),
+       "thr": round(best[0],3), "precision": round(best[1],3),
+       "EV_per_trade": round(best[2],3), "n_signals": int(best[3])})
+'@ | python -
+
+Optional: month/regime summary of EV at a threshold
+
+(Just swap the CSV path if you try different runs.)
+
+@'
+import pandas as pd, numpy as np
+P = pd.read_csv(r"outputs/preds_cv_tp_grouped.csv")
+L = pd.read_csv(r"data/images_jan_jul/btc_labels_ticksONLY_GROUPED_m600_w.csv")
+L = L.reset_index(drop=True); L["row_id"]=L.index.astype("int64")
+M = P.merge(L[["row_id","month"]], on="row_id", how="left")
+
+W, L0 = 50.50335478971694, 18.404720361751057
+def EV(pr): return pr*W - (1-pr)*L0
+
+thr = 0.5  # or use the best threshold printed above
+rows=[]
+for m,g in M.groupby("month"):
+    y = g["y_true_bin"].to_numpy().astype(int)
+    p = g["p_tp"].clip(0,1).to_numpy()
+    sel = p>=thr
+    if sel.sum()==0: rows.append((m,0,0.0,0.0)); continue
+    pr = y[sel].mean()
+    rows.append((m, int(sel.sum()), float(pr), float(EV(pr))))
+print(pd.DataFrame(rows, columns=["month","n_trades","precision","EV_per_trade"]).to_string(index=False))
+'@ | python -

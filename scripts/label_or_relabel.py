@@ -1,5 +1,6 @@
-import argparse, os, glob, pandas as pd, numpy as np
+import argparse, os, glob, pandas as pd, numpy as np, sys
 from pathlib import Path
+from src.utils.progress import pbar
 
 # ---------- IO helpers ----------
 def load_any(path, nrows=None):
@@ -74,15 +75,20 @@ def ensure_dtindex(df: pd.DataFrame) -> pd.DataFrame:
         df.index = df.index.tz_localize("UTC", nonexistent="shift_forward", ambiguous="NaT")
     return df.sort_index()
 
-def atr_wilder(df: pd.DataFrame, n: int = 14) -> pd.Series:
-    h, l, c = df["high"].values, df["low"].values, df["close"].values
-    prev_c = np.r_[np.nan, c[:-1]]
-    tr = np.maximum(h - l, np.maximum(np.abs(h - prev_c), np.abs(l - prev_c)))
-    atr = np.empty_like(tr); atr[:] = np.nan
-    if len(tr) < n+1: return pd.Series(atr, index=df.index)
-    atr[n-1] = np.nanmean(tr[:n]); alpha = 1.0/n
-    for i in range(n, len(tr)): atr[i] = (1-alpha)*atr[i-1] + alpha*tr[i]
-    return pd.Series(atr, index=df.index)
+def _pick_price_columns(bars: pd.DataFrame):
+    m = {c.lower(): c for c in bars.columns}
+    close = m.get("close") or m.get("price")
+    if close is None:
+        raise ValueError(f"No close/price column in bars: {list(bars.columns)}")
+    high = m.get("high", close)
+    low = m.get("low", close)
+    return bars[close], bars[high], bars[low]
+
+
+def _atr_wilder(close: pd.Series, high: pd.Series, low: pd.Series, n: int = 14) -> pd.Series:
+    prev = close.shift(1)
+    tr = pd.concat([(high - low).abs(), (high - prev).abs(), (low - prev).abs()], axis=1).max(axis=1)
+    return tr.ewm(alpha=1 / n, adjust=False).mean()
 
 def compute_end_index(bars_index: pd.DatetimeIndex, start_idx: int,
                       horizon_bars: int | None = None,
@@ -97,9 +103,10 @@ def compute_end_index(bars_index: pd.DatetimeIndex, start_idx: int,
     end = max(end, start_idx + 1)  # ensure at least one future bar
     return min(end, n - 1)
 
-def first_hit_label(df: pd.DataFrame, i0: int, horizon_bars: int | None, horizon_minutes: int | None, up: float, dn: float):
-    hi, lo = df["high"].values, df["low"].values
-    end = compute_end_index(df.index, i0, horizon_bars, horizon_minutes)
+def first_hit_label(hi: np.ndarray, lo: np.ndarray, index: pd.DatetimeIndex,
+                    i0: int, horizon_bars: int | None, horizon_minutes: int | None,
+                    up: float, dn: float):
+    end = compute_end_index(index, i0, horizon_bars, horizon_minutes)
     if i0 >= end: return 2, i0
     for j in range(i0+1, end+1):
         if hi[j] >= up: return 1, j
@@ -107,41 +114,58 @@ def first_hit_label(df: pd.DataFrame, i0: int, horizon_bars: int | None, horizon
     return 2, end
 
 def relabel_snapshot(snapshot_csv, out_csv, atr_window=14, tp_mult=2.0, sl_mult=2.0,
-                     horizon_bars=None, horizon_minutes=None, bars_root=""):
+                     horizon_bars=None, horizon_minutes=None, bars_root="", progress: bool = False):
     snap = pd.read_csv(snapshot_csv, low_memory=False)
     out_rows = []
-    grouped = snap.groupby("source_file", sort=False)
-    for src, sub in grouped:
+    groups = list(snap.groupby("source_file", sort=False))
+    bar_files = pbar(total=len(groups), desc="files") if progress else None
+    bar_rows  = pbar(total=len(snap), desc="rows", position=1, leave=True) if progress else None
+    for src, sub in groups:
+        if bar_files:
+            try:
+                bar_files.set_postfix_str(Path(src).name)
+            except Exception:
+                pass
         bars_path = src if os.path.isabs(src) else os.path.join(bars_root, src) if bars_root else src
         if not os.path.exists(bars_path):
             print(f"[WARN] bars missing: {bars_path}"); continue
         df = pd.read_parquet(bars_path)
         df = ensure_dtindex(df)
-        df["ATR"] = atr_wilder(df, atr_window)
+        close, high, low = _pick_price_columns(df)
+        atr = _atr_wilder(close, high, low, n=atr_window)
         idx = df.index
         t1 = pd.to_datetime(sub["t1"].values, utc=True, errors="coerce")
         i0 = np.searchsorted(idx.values, t1.values, side="right") - 1
         i0 = np.clip(i0, 0, len(idx)-1)
-        closes, atr = df["close"].values, df["ATR"].values
+        closes, atr = close.values, atr.values
+        hi_arr, lo_arr = high.values, low.values
         labels, end_ix, tp_prices, sl_prices = [], [], [], []
         for i in i0:
             e, a = closes[i], atr[i]
             if not np.isfinite(a):
                 labels.append(2); end_ix.append(i); tp_prices.append(np.nan); sl_prices.append(np.nan); continue
             up, dn = e + tp_mult*a, e - sl_mult*a
-            lab, j = first_hit_label(df, i, horizon_bars, horizon_minutes, up, dn)
+            lab, j = first_hit_label(hi_arr, lo_arr, idx, i, horizon_bars, horizon_minutes, up, dn)
             labels.append(lab); end_ix.append(j); tp_prices.append(up); sl_prices.append(dn)
+            if bar_rows:
+                bar_rows.update(1)
         sub2 = sub.copy()
         sub2["label"] = labels
         sub2["event_end_ts"] = idx.values[np.array(end_ix)]
         sub2["tp_price"] = tp_prices
         sub2["sl_price"] = sl_prices
         out_rows.append(sub2)
+        if bar_files:
+            bar_files.update(1)
     if not out_rows:
         raise RuntimeError("Relabel produced 0 rows; check bars paths.")
     out = pd.concat(out_rows, ignore_index=True)
     save_csv(out, out_csv)
     print(f"[relabel] wrote: {out_csv} rows={len(out)}")
+    if bar_files:
+        bar_files.close()
+    if bar_rows:
+        bar_rows.close()
     return out_csv
 
 # ---------- Orchestrator ----------
@@ -164,6 +188,7 @@ def main():
     ap.add_argument("--horizon_minutes", type=int, default=None,
                     help="Vertical barrier as wall-time minutes (mutually exclusive with --horizon_bars)")
     ap.add_argument("--bars_root", default="")  # optional prefix for bars paths
+    ap.add_argument("--progress", action="store_true", help="Show tqdm progress bars")
     args = ap.parse_args()
 
     # sanity: exactly one of horizon_bars or horizon_minutes
@@ -203,7 +228,8 @@ def main():
     relabel_snapshot(
         snapshot_csv=args.snapshot, out_csv=args.out_csv,
         atr_window=args.atr_window, tp_mult=args.tp_mult, sl_mult=args.sl_mult,
-        horizon_bars=args.horizon_bars, horizon_minutes=args.horizon_minutes, bars_root=args.bars_root
+        horizon_bars=args.horizon_bars, horizon_minutes=args.horizon_minutes, bars_root=args.bars_root,
+        progress=args.progress
     )
 
 if __name__ == "__main__":

@@ -1,12 +1,18 @@
-# Data files
+# Local data & artifacts
 data/
+artifacts/
 
-# Python cache
+# Generated outputs
+outputs/
+
+# Python caches & env
 __pycache__/
-
-# Virtual environment
 venv/
 *.env
 
-# Outputs - you may want to track reports but not large artifacts
-outputs/artifacts/
+# Large model/array blobs
+*.npy
+*.npz
+*.pt
+*.pth 
+*.csv
