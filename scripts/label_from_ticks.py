@@ -413,6 +413,13 @@ def main():
             rd = r.to_dict()
             rd["label"] = lab
             rd["event_end_ts"] = t_end
+            # Derive month strictly from computed t0; ensure UTC
+            try:
+                # normalize t0 to UTC Timestamp
+                rd["t0"] = pd.Timestamp(t0).tz_localize("UTC") if getattr(pd.Timestamp(t0), 'tz', None) is None else pd.Timestamp(t0).tz_convert("UTC")
+            except Exception:
+                rd["t0"] = pd.to_datetime(t0, utc=True, errors="coerce")
+            rd["month"] = pd.Timestamp(rd["t0"]).strftime("%Y-%m") if pd.notna(rd["t0"]) else r.get("month", None)
             out_rows.append(rd)
             inner.update(1)
 
@@ -429,7 +436,22 @@ def main():
     if not chunks:
         print("[tick-touch] no chunks to merge")
         return
-    pd.concat((pd.read_csv(p) for p in chunks), ignore_index=True).to_csv(out_path, index=False)
+    out_df = pd.concat((pd.read_csv(p) for p in chunks), ignore_index=True)
+    # Ensure t0 parsed and month derived; then drop months not present in snapshot
+    if "t0" in out_df.columns:
+        out_df["t0"] = pd.to_datetime(out_df["t0"], errors="coerce", utc=True, format="mixed")
+        out_df["month"] = out_df["t0"].dt.strftime("%Y-%m")
+    try:
+        snap_months = set(pd.read_csv(args.snapshot, usecols=["month"])['month'].astype(str).unique())
+        if "month" in out_df.columns:
+            out_months = set(out_df["month"].astype(str).dropna().unique())
+            extra = out_months - snap_months
+            if extra:
+                print(f"[warn] dropping months not present in snapshot: {sorted(extra)}")
+                out_df = out_df[out_df["month"].isin(snap_months)].copy()
+    except Exception:
+        pass
+    out_df.to_csv(out_path, index=False)
     print(f"[tick-touch] wrote: {out_path} (from {len(chunks)} chunks)")
 
 

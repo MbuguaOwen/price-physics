@@ -32,9 +32,24 @@ def main():
     bar = pbar(total=len(df), desc="uniqueness") if args.progress else None
     groups = df.groupby("symbol", sort=False) if "symbol" in df.columns else [("_all", df)]
     for sym, D in groups:
-        # Use int64 nanoseconds for vectorized math (tz-aware safe)
-        starts = D["t0"].view("int64").to_numpy()
-        ends   = D["event_end_ts"].view("int64").to_numpy()
+        # Parse to UTC datetimes first (robust to strings/naive datetimes)
+        D["t0"] = pd.to_datetime(D["t0"], errors="coerce", utc=True)
+        D["event_end_ts"] = pd.to_datetime(D["event_end_ts"], errors="coerce", utc=True)
+
+        # Drop rows missing either timestamp
+        D = D[D["t0"].notna() & D["event_end_ts"].notna()].copy()
+
+        # Convert to int64 epoch ns without deprecated .view
+        starts = D["t0"].astype("int64").to_numpy(copy=False)
+        ends   = D["event_end_ts"].astype("int64").to_numpy(copy=False)
+
+        # Optional safety: enforce ends >= starts
+        m = ends >= starts
+        if m.sum() < len(D):
+            D = D.loc[m].copy()
+            starts = starts[m]
+            ends = ends[m]
+
         times = np.unique(np.sort(np.r_[starts, ends]))
         if len(times)==0: continue
         idx = {t:i for i,t in enumerate(times)}

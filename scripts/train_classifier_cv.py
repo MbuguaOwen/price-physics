@@ -3,6 +3,8 @@ import ast
 from torch.utils.data import DataLoader, Subset, WeightedRandomSampler
 from src.datasets.shard_dataset import ShardDataset
 from src.utils.progress import pbar
+import os
+import numpy as np
 
 
 def parse_class_weight(s, n_classes=None):
@@ -72,6 +74,7 @@ def build_split_for_fold(L: pd.DataFrame, F: pd.DataFrame, f: int):
 
 
 def run_fold(args, fold_id, L: pd.DataFrame, F: pd.DataFrame):
+    # NOTE: never shadow numpy as 'np' in this function.
     # Build keyed train/val splits
     train_df, val_df = build_split_for_fold(L, F, fold_id)
 
